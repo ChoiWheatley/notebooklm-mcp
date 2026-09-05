@@ -21,11 +21,17 @@ import path from "path";
 const paths = envPaths("notebooklm-mcp", { suffix: "" });
 
 /**
- * Google NotebookLM Auth URL (used by setup_auth)
- * This is the base Google login URL that redirects to NotebookLM
+ * Google Notebook Auth URL (used by setup_auth).
+ * NotebookLM now redirects to notebook.google.com after the rebrand.
  */
 export const NOTEBOOKLM_AUTH_URL =
-  "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fnotebooklm.google.com%2F&flowName=GlifWebSignIn&flowEntry=ServiceLogin";
+  "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fnotebook.google.com%2F&flowName=GlifWebSignIn&flowEntry=ServiceLogin";
+
+/** Accept both current and legacy Notebook URLs for existing sessions and links. */
+export const NOTEBOOK_APP_URL_PREFIXES = [
+  "https://notebook.google.com/",
+  "https://notebooklm.google.com/",
+] as const;
 
 export interface Config {
   // NotebookLM - optional, used for legacy default notebook

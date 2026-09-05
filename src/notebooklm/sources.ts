@@ -8,16 +8,17 @@
  * File-upload, YouTube and Google-Drive ingestion are intentionally out of
  * scope for v2.0.0 — they require different overlay flows.
  *
- * Robustness strategy (2026-05, ported from the Fork's content-manager.ts):
+ * Robustness strategy (2026-09, verified against the live rebranded UI):
  *
  *   1. Capture the *expected notebook UUID* from the URL up-front. NotebookLM
  *      sometimes redirects pasted-text uploads to a freshly-created notebook;
  *      we detect that and surface a clear error.
  *
  *   2. Resolve the dialog state defensively: if a dialog is already open we
- *      use it; otherwise we click the sidebar "Add source" button. The
- *      `[role="dialog"]` anchor is set synchronously on mount, so we do not
- *      have to race the Material `.mdc-dialog--open` animation class.
+ *      use it; otherwise we click the sidebar "Add source" control. In the
+ *      rebranded UI Playwright locator clicks are intercepted by an
+ *      invisible cdk backdrop, so after failed locator clicks we fall back
+ *      to a direct DOM click via page.evaluate (verified E2E 2026-09).
  *
  *   3. Source-type buttons no longer ship with aria-labels — see
  *      selectors.ts for the icon-/text-based anchors.
@@ -86,9 +87,7 @@ export async function addSource(page: Page, input: AddSourceInput): Promise<AddS
       const currentUrl = page.url();
       const currentUuid = currentUrl.match(/notebook\/([a-f0-9-]+)/)?.[1];
       if (currentUuid && currentUuid !== expectedUuid) {
-        log.error(
-          `  ❌ Notebook redirect: expected ${expectedUuid}, got ${currentUuid}`
-        );
+        log.error(`  ❌ Notebook redirect: expected ${expectedUuid}, got ${currentUuid}`);
         return {
           success: false,
           type: input.type,
@@ -180,9 +179,40 @@ export async function countSources(page: Page): Promise<number> {
 }
 
 /**
+ * Dismiss lingering CDK overlays before interacting with the page.
+ *
+ * The rebranded notebook.google.com UI leaves `cdk-overlay-popover`
+ * (e.g. the Korean quota-information popover) and `cdk-overlay-backdrop`
+ * elements mounted after a dialog closes. They intercept pointer events,
+ * so the Add-source button click is swallowed. Remedy: press Escape, then
+ * force-click the backdrop as a fallback. Safe no-op when nothing blocks.
+ */
+export async function dismissOverlays(page: Page): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const popover = page.locator(".cdk-overlay-popover").first();
+    const backdrop = page.locator(".cdk-overlay-backdrop").first();
+    const popoverVisible = await popover.isVisible({ timeout: 300 }).catch(() => false);
+    const backdropVisible = await backdrop.isVisible({ timeout: 300 }).catch(() => false);
+
+    if (!popoverVisible && !backdropVisible) return;
+
+    log.info(`  🚪 Dismissing lingering CDK overlay (attempt ${attempt + 1})…`);
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await safeSleep(page, 300);
+
+    if (await backdrop.isVisible({ timeout: 200 }).catch(() => false)) {
+      await backdrop.click({ force: true, timeout: 1_000 }).catch(() => undefined);
+      await safeSleep(page, 300);
+    }
+  }
+}
+
+/**
  * Open the Add-source modal. Order of attempts:
+ *   0. Dismiss any lingering CDK popover/backdrop that would swallow clicks.
  *   1. Dialog already open → use it (auto-modal on fresh notebooks).
- *   2. Click the sidebar "Add source" button.
+ *   2. Click the sidebar "Add source" control (retry once after clearing
+ *      overlays, with a force-click fallback).
  *   3. Last resort: navigate to `?addSource=true`, which auto-opens.
  */
 async function openAddSourceOverlay(page: Page): Promise<void> {
@@ -191,19 +221,64 @@ async function openAddSourceOverlay(page: Page): Promise<void> {
     return;
   }
 
+  // Clear informational popovers / stale backdrops that intercept clicks.
+  await dismissOverlays(page);
+
   // Try the sidebar button first — fastest path on a populated notebook.
-  try {
-    await page
-      .locator(joinAlt(Selectors.sources.addButton))
-      .first()
-      .click({ timeout: 5_000 });
-    await page
-      .locator(Selectors.sources.overlayPane)
-      .first()
-      .waitFor({ state: "visible", timeout: 8_000 });
-    return;
-  } catch (err) {
-    log.warning(`  ⚠️  Add-source button click failed (${err}), trying ?addSource=true URL fallback`);
+  // Three rounds: normal click, force click, then a direct DOM click (the
+  // rebranded UI's invisible backdrop defeats locator hit-testing).
+  for (let round = 0; round < 3; round++) {
+    try {
+      await page
+        .locator(joinAlt(Selectors.sources.addButton))
+        .first()
+        .click({ timeout: 5_000, force: round >= 1 });
+      await page
+        .locator(Selectors.sources.overlayPane)
+        .first()
+        .waitFor({ state: "visible", timeout: 8_000 });
+      return;
+    } catch (err) {
+      if (round === 0) {
+        log.warning(`  ⚠️  Add-source button click failed (${err}), retrying with force…`);
+        await dismissOverlays(page);
+      } else if (round === 1) {
+        log.warning("  ⚠️  Force click failed, trying direct DOM click…");
+        let opened = false;
+        for (const sel of Selectors.sources.addButton) {
+          if (await domClick(page, sel)) {
+            await page
+              .locator(Selectors.sources.overlayPane)
+              .first()
+              .waitFor({ state: "visible", timeout: 8_000 })
+              .catch(() => undefined);
+            if (await isOverlayVisible(page)) {
+              log.info(`  ✅ Add-source dialog opened via DOM click (${sel})`);
+              opened = true;
+              break;
+            }
+          }
+        }
+        if (opened) return;
+        // Last DOM fallback used successfully in E2E verification: the text
+        // link inside the sources panel.
+        if (await domClick(page, ".add-source-link")) {
+          await page
+            .locator(Selectors.sources.overlayPane)
+            .first()
+            .waitFor({ state: "visible", timeout: 8_000 })
+            .catch(() => undefined);
+          if (await isOverlayVisible(page)) {
+            log.info("  ✅ Add-source dialog opened via DOM click (.add-source-link)");
+            return;
+          }
+        }
+      } else {
+        log.warning(
+          `  ⚠️  Add-source DOM click failed (${err}), trying ?addSource=true URL fallback`
+        );
+      }
+    }
   }
 
   // URL fallback — useful when the sidebar button is hidden or covered.
@@ -230,14 +305,42 @@ async function isOverlayVisible(page: Page): Promise<boolean> {
     .catch(() => false);
 }
 
+/**
+ * Direct DOM click fallback. The rebranded UI keeps an invisible
+ * `.cdk-overlay-backdrop` mounted that intercepts Playwright locator clicks;
+ * a dispatched click on the element itself bypasses hit testing entirely.
+ * Returns true when a matching element was found and clicked.
+ */
+async function domClick(page: Page, selector: string): Promise<boolean> {
+  return page
+    .evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      (el as HTMLElement).click();
+      return true;
+    }, selector)
+    .catch(() => false);
+}
+
 async function pickSourceType(page: Page, type: SourceType): Promise<void> {
   const candidates =
     type === "url" ? Selectors.sources.sourceTypeUrl : Selectors.sources.sourceTypeText;
   const overlay = page.locator(Selectors.sources.overlayPane).first();
+
+  // NOTE: do NOT run dismissOverlays here. Once the add-source dialog is
+  // open, its own cdk backdrop is detected by dismissOverlays and the
+  // Escape press closes the dialog we just opened (verified live 2026-09).
   for (const sel of candidates) {
     const target = overlay.locator(sel).first();
     if (await target.isVisible({ timeout: 1_000 }).catch(() => false)) {
-      await target.click();
+      try {
+        await target.click({ timeout: 3_000 });
+      } catch {
+        // Interception retry: force-click bypasses the hit-target check.
+        log.warning(`  ⚠️  Source-type click intercepted, retrying with force…`);
+        await dismissOverlays(page);
+        await target.click({ timeout: 3_000, force: true });
+      }
       // Sub-dialog needs a moment to hydrate before we type.
       await safeSleep(page, 500);
       return;
@@ -312,7 +415,22 @@ async function confirmInsert(page: Page): Promise<void> {
     if (await btn.isVisible({ timeout: 1_000 }).catch(() => false)) {
       const disabled = await btn.isDisabled().catch(() => false);
       if (disabled) continue;
-      await btn.click();
+      try {
+        await btn.click({ timeout: 5_000 });
+      } catch {
+        // Force-click fallback when a lingering overlay intercepts.
+        await dismissOverlays(page);
+        await btn.click({ timeout: 5_000, force: true }).catch(async () => {
+          // The rebranded UI's backdrop can still defeat force clicks; the
+          // dispatched DOM click is the verified last resort (E2E 2026-09).
+          const text = sel.match(/has-text\("([^"]+)"\)/)?.[1];
+          if (text && (await domClick(page, `.cdk-overlay-pane button:has-text("${text}")`))) {
+            log.info(`  ✅ submit clicked via DOM click (${text})`);
+            return;
+          }
+          throw new Error(`Insert click failed for selector: ${sel}`);
+        });
+      }
       log.info(`  ✅ submit clicked (selector: ${sel})`);
       return;
     }
@@ -332,6 +450,9 @@ async function waitForOverlayToClose(page: Page, timeoutMs: number = 30_000): Pr
     .first()
     .waitFor({ state: "hidden", timeout: timeoutMs })
     .catch(() => undefined);
+  // The rebranded UI can leave a dark `cdk-overlay-backdrop` behind after the
+  // dialog itself is gone — clear it so subsequent chat clicks are not blocked.
+  await dismissOverlays(page);
 }
 
 async function waitForSourceCountIncrease(
