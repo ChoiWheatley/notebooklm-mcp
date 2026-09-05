@@ -145,8 +145,8 @@ export const askQuestionTool: Tool = {
           "Direct NotebookLM URL — overrides `notebook_id`. Use for ad-hoc " +
           "queries against notebooks not yet in your library. Format: " +
           "`https://notebooklm.google.com/notebook/<uuid>` (legacy) or " +
-            "`https://notebook.google.com/notebook/<uuid>` (current " +
-            "Gemini Notebook domain).",
+          "`https://notebook.google.com/notebook/<uuid>` (current " +
+          "Gemini Notebook domain).",
       },
       source_format: {
         type: "string",
@@ -154,8 +154,8 @@ export const askQuestionTool: Tool = {
         description:
           "How citations are returned alongside the answer:\n" +
           "  • `none` (default) — raw answer, no citation extraction (fastest)\n" +
-          "  • `footnotes` — answer plus a `Sources:` block, e.g. `[1] DocName — \"excerpt…\"`\n" +
-          "  • `inline` — `[N]` markers in the answer are replaced with `[N] (DocName: \"excerpt…\")`\n" +
+          '  • `footnotes` — answer plus a `Sources:` block, e.g. `[1] DocName — "excerpt…"`\n' +
+          '  • `inline` — `[N]` markers in the answer are replaced with `[N] (DocName: "excerpt…")`\n' +
           "  • `json` — answer text untouched; structured `sources` array on the response\n\n" +
           "Use `none` for snappy chat. Use `json` when downstream code needs to " +
           "process citations programmatically. Use `footnotes`/`inline` when " +
