@@ -180,9 +180,40 @@ export async function countSources(page: Page): Promise<number> {
 }
 
 /**
+ * Dismiss lingering CDK overlays before interacting with the page.
+ *
+ * The rebranded notebook.google.com UI leaves `cdk-overlay-popover`
+ * (e.g. the Korean quota-information popover) and `cdk-overlay-backdrop`
+ * elements mounted after a dialog closes. They intercept pointer events,
+ * so the Add-source button click is swallowed. Remedy: press Escape, then
+ * force-click the backdrop as a fallback. Safe no-op when nothing blocks.
+ */
+export async function dismissOverlays(page: Page): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const popover = page.locator(".cdk-overlay-popover").first();
+    const backdrop = page.locator(".cdk-overlay-backdrop").first();
+    const popoverVisible = await popover.isVisible({ timeout: 300 }).catch(() => false);
+    const backdropVisible = await backdrop.isVisible({ timeout: 300 }).catch(() => false);
+
+    if (!popoverVisible && !backdropVisible) return;
+
+    log.info(`  🚪 Dismissing lingering CDK overlay (attempt ${attempt + 1})…`);
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await safeSleep(page, 300);
+
+    if (await backdrop.isVisible({ timeout: 200 }).catch(() => false)) {
+      await backdrop.click({ force: true, timeout: 1_000 }).catch(() => undefined);
+      await safeSleep(page, 300);
+    }
+  }
+}
+
+/**
  * Open the Add-source modal. Order of attempts:
+ *   0. Dismiss any lingering CDK popover/backdrop that would swallow clicks.
  *   1. Dialog already open → use it (auto-modal on fresh notebooks).
- *   2. Click the sidebar "Add source" button.
+ *   2. Click the sidebar "Add source" control (retry once after clearing
+ *      overlays, with a force-click fallback).
  *   3. Last resort: navigate to `?addSource=true`, which auto-opens.
  */
 async function openAddSourceOverlay(page: Page): Promise<void> {
@@ -191,19 +222,33 @@ async function openAddSourceOverlay(page: Page): Promise<void> {
     return;
   }
 
+  // Clear informational popovers / stale backdrops that intercept clicks.
+  await dismissOverlays(page);
+
   // Try the sidebar button first — fastest path on a populated notebook.
-  try {
-    await page
-      .locator(joinAlt(Selectors.sources.addButton))
-      .first()
-      .click({ timeout: 5_000 });
-    await page
-      .locator(Selectors.sources.overlayPane)
-      .first()
-      .waitFor({ state: "visible", timeout: 8_000 });
-    return;
-  } catch (err) {
-    log.warning(`  ⚠️  Add-source button click failed (${err}), trying ?addSource=true URL fallback`);
+  // Two rounds: a normal click, then a force-click retry (the rebranded UI
+  // sometimes keeps an invisible overlay above the button).
+  for (let round = 0; round < 2; round++) {
+    try {
+      await page
+        .locator(joinAlt(Selectors.sources.addButton))
+        .first()
+        .click({ timeout: 5_000, force: round === 1 });
+      await page
+        .locator(Selectors.sources.overlayPane)
+        .first()
+        .waitFor({ state: "visible", timeout: 8_000 });
+      return;
+    } catch (err) {
+      if (round === 0) {
+        log.warning(`  ⚠️  Add-source button click failed (${err}), retrying with force…`);
+        await dismissOverlays(page);
+      } else {
+        log.warning(
+          `  ⚠️  Add-source button force-click failed (${err}), trying ?addSource=true URL fallback`
+        );
+      }
+    }
   }
 
   // URL fallback — useful when the sidebar button is hidden or covered.
@@ -234,10 +279,22 @@ async function pickSourceType(page: Page, type: SourceType): Promise<void> {
   const candidates =
     type === "url" ? Selectors.sources.sourceTypeUrl : Selectors.sources.sourceTypeText;
   const overlay = page.locator(Selectors.sources.overlayPane).first();
+
+  // Informational popovers (e.g. the KO quota popover) can sit above the
+  // source-type cards — clear them before clicking.
+  await dismissOverlays(page);
+
   for (const sel of candidates) {
     const target = overlay.locator(sel).first();
     if (await target.isVisible({ timeout: 1_000 }).catch(() => false)) {
-      await target.click();
+      try {
+        await target.click({ timeout: 3_000 });
+      } catch {
+        // Interception retry: force-click bypasses the hit-target check.
+        log.warning(`  ⚠️  Source-type click intercepted, retrying with force…`);
+        await dismissOverlays(page);
+        await target.click({ timeout: 3_000, force: true });
+      }
       // Sub-dialog needs a moment to hydrate before we type.
       await safeSleep(page, 500);
       return;
@@ -312,7 +369,13 @@ async function confirmInsert(page: Page): Promise<void> {
     if (await btn.isVisible({ timeout: 1_000 }).catch(() => false)) {
       const disabled = await btn.isDisabled().catch(() => false);
       if (disabled) continue;
-      await btn.click();
+      try {
+        await btn.click({ timeout: 5_000 });
+      } catch {
+        // Force-click fallback when a lingering overlay intercepts.
+        await dismissOverlays(page);
+        await btn.click({ timeout: 5_000, force: true });
+      }
       log.info(`  ✅ submit clicked (selector: ${sel})`);
       return;
     }
@@ -332,6 +395,9 @@ async function waitForOverlayToClose(page: Page, timeoutMs: number = 30_000): Pr
     .first()
     .waitFor({ state: "hidden", timeout: timeoutMs })
     .catch(() => undefined);
+  // The rebranded UI can leave a dark `cdk-overlay-backdrop` behind after the
+  // dialog itself is gone — clear it so subsequent chat clicks are not blocked.
+  await dismissOverlays(page);
 }
 
 async function waitForSourceCountIncrease(

@@ -18,13 +18,14 @@
  *      no animation race.
  *
  *   4. **Locale-bound aria-labels and visible text** — last resort. Each
- *      list below covers the eight major NotebookLM locales:
- *      EN, DE, FR, ES, PT, IT, NL, JA. Adding more is mechanical; nothing
- *      breaks if a locale is missing because the class/icon anchors fire
- *      first.
+ *      list below covers the nine major NotebookLM locales:
+ *      EN, DE, FR, ES, PT, IT, NL, JA, KO. Adding more is mechanical;
+ *      nothing breaks if a locale is missing because the class/icon anchors
+ *      fire first.
  *
- * Last verified: 2026-05 against the live notebooklm.google.com layout
- * (DE, EN locales).
+ * Last verified: 2026-09 against the live notebook.google.com layout
+ * (Gemini Notebook rebrand; KO, EN locales). The old notebooklm.google.com
+ * domain still redirects, so every URL matcher accepts both hosts.
  */
 
 export const Selectors = {
@@ -47,6 +48,9 @@ export const Selectors = {
       'textarea[aria-label*="vraag" i]',
       'textarea[aria-label*="質問" i]',
       'textarea[aria-label*="pergunta" i]',
+      // KO — Korean locale ("쿼리 상자" = query box).
+      'textarea[aria-label*="쿼리 상자" i]',
+      'textarea[placeholder*="질문하거나 창작하세요" i]',
     ],
     /**
      * The chat submit button has the *language-bound* aria-label
@@ -64,6 +68,7 @@ export const Selectors = {
       'button.submit-button[aria-label*="invia" i]',
       'button.submit-button[aria-label*="verzend" i]',
       'button.submit-button[aria-label*="送信" i]',
+      'button.submit-button[aria-label*="보내기" i]',
     ],
   },
 
@@ -80,6 +85,7 @@ export const Selectors = {
       '[role="tab"]:has-text("Discussione")',
       '[role="tab"]:has-text("Discussão")',
       '[role="tab"]:has-text("ディスカッション")',
+      '[role="tab"]:has-text("토론")',
     ],
     sources: [
       '[role="tab"]:has-text("Sources")',
@@ -89,6 +95,7 @@ export const Selectors = {
       '[role="tab"]:has-text("Fontes")',
       '[role="tab"]:has-text("Bronnen")',
       '[role="tab"]:has-text("ソース")',
+      '[role="tab"]:has-text("출처")',
     ],
     activeTabClass: "mdc-tab--active",
     tabList: ".mat-mdc-tab-list .mdc-tab",
@@ -125,6 +132,11 @@ export const Selectors = {
       "button.add-source-button",
       'button[aria-label="Add source"]',
       'button[aria-label*="add source" i]',
+      // KO — Korean locale: "출처 추가" / "소스 추가" (rebranded UI).
+      'button[aria-label*="출처 추가" i]',
+      'button[aria-label*="소스 추가" i]',
+      '[role="button"][aria-label*="출처 추가" i]',
+      '[role="button"][aria-label*="소스 추가" i]',
       'button[aria-label*="quelle hinzu" i]',
       'button[aria-label*="ajouter une source" i]',
       'button[aria-label*="añadir fuente" i]',
@@ -160,6 +172,9 @@ export const Selectors = {
       'button.drop-zone-icon-button:has-text("Sito web")',
       'button.drop-zone-icon-button:has-text("Sites")',
       'button.drop-zone-icon-button:has-text("ウェブサイト")',
+      // KO — Korean locale.
+      'button.drop-zone-icon-button:has-text("웹사이트")',
+      'button.drop-zone-icon-button:has-text("웹사이트 URL")',
       'span:has-text("Website")',
       'span:has-text("URL")',
     ],
@@ -175,6 +190,8 @@ export const Selectors = {
       'button.drop-zone-icon-button:has-text("Testo copiato")',
       'button.drop-zone-icon-button:has-text("Gekopieerde tekst")',
       'button.drop-zone-icon-button:has-text("コピーしたテキスト")',
+      'button.drop-zone-icon-button:has-text("복사한 텍스트")',
+      'button.drop-zone-icon-button:has-text("붙여넣은 텍스트")',
       'span:has-text("Copied text")',
       'span:has-text("Pasted text")',
       '[data-type="text"]',
@@ -193,6 +210,8 @@ export const Selectors = {
       'button.drop-zone-icon-button:has-text("Carica")',
       'button.drop-zone-icon-button:has-text("Uploaden")',
       'button.drop-zone-icon-button:has-text("アップロード")',
+      // KO — Korean locale.
+      'button.drop-zone-icon-button:has-text("업로드")',
     ],
     /**
      * Primary submit button in the add-source dialog. Material's
@@ -228,10 +247,15 @@ export const Selectors = {
       'button:has-text("Toevoegen")',
       'button:has-text("挿入")',
       'button:has-text("追加")',
+      // KO — Korean locale.
+      'button.mdc-button--raised:has-text("삽입")',
+      'button.mdc-button--raised:has-text("추가")',
+      'button:has-text("삽입")',
+      'button:has-text("추가")',
       'button:has-text("Add")',
       'button:has-text("Submit")',
       'button[type="submit"]',
-      '[role="dialog"] .mdc-dialog__actions button:not(:has-text("Cancel")):not(:has-text("Close")):not(:has-text("Schließen")):not(:has-text("Annuler")):not(:has-text("Cancelar")):not(:has-text("Annulla")):not(:has-text("Annuleren")):not(:has-text("キャンセル"))',
+      '[role="dialog"] .mdc-dialog__actions button:not(:has-text("Cancel")):not(:has-text("Close")):not(:has-text("Schließen")):not(:has-text("Annuler")):not(:has-text("Cancelar")):not(:has-text("Annulla")):not(:has-text("Annuleren")):not(:has-text("キャンセル")):not(:has-text("취소"))',
     ],
   },
 
@@ -254,6 +278,7 @@ export const Selectors = {
       '[role="button"][aria-label*="visão geral de áudio" i]',
       '[role="button"][aria-label*="audio-overzicht" i]',
       '[role="button"][aria-label*="音声の概要" i]',
+      '[role="button"][aria-label*="오디오 개요" i]',
       '[role="button"][aria-label*="audio" i]',
       // Legacy <button> fallbacks for older builds.
       'button:has(mat-icon:text-is("audio_magic_eraser"))',
@@ -275,6 +300,7 @@ export const Selectors = {
       'button:has-text("Gerar")',
       'button:has-text("Genereren")',
       'button:has-text("生成")',
+      'button:has-text("생성")',
     ],
     /**
      * Download trigger. The Studio panel uses an icon-only button with a
@@ -292,6 +318,7 @@ export const Selectors = {
       'button[aria-label*="baixar" i]',
       'button[aria-label*="downloaden" i]',
       'button[aria-label*="ダウンロード" i]',
+      'button[aria-label*="다운로드" i]',
     ],
     /**
      * Completed Audio-Overview tile. Modern NotebookLM does NOT mount a real
@@ -322,6 +349,7 @@ export const Selectors = {
       'artifact-library-item button[aria-label*="mais" i]',
       'artifact-library-item button[aria-label*="meer" i]',
       'artifact-library-item button[aria-label*="その他" i]',
+      'artifact-library-item button[aria-label*="더보기" i]',
     ],
     /**
      * Download menu-item that surfaces after clicking the three-dot menu.
@@ -336,6 +364,7 @@ export const Selectors = {
       '[role="menuitem"]:has-text("Baixar")',
       '[role="menuitem"]:has-text("Downloaden")',
       '[role="menuitem"]:has-text("ダウンロード")',
+      '[role="menuitem"]:has-text("다운로드")',
     ],
   },
 
@@ -350,6 +379,7 @@ export const Selectors = {
       'button[aria-label*="opciones" i]',
       'button[aria-label*="opções" i]',
       'button[aria-label*="メニュー" i]',
+      'button[aria-label*="메뉴" i]',
     ],
     deleteButton: [
       '[role="menuitem"]:has-text("Delete")',
@@ -361,6 +391,7 @@ export const Selectors = {
       '[role="menuitem"]:has-text("Excluir")',
       '[role="menuitem"]:has-text("Verwijderen")',
       '[role="menuitem"]:has-text("削除")',
+      '[role="menuitem"]:has-text("삭제")',
     ],
     confirmDelete: [
       'button:has-text("Delete")',
@@ -372,6 +403,7 @@ export const Selectors = {
       'button:has-text("Excluir")',
       'button:has-text("Verwijderen")',
       'button:has-text("削除")',
+      'button:has-text("삭제")',
     ],
   },
 

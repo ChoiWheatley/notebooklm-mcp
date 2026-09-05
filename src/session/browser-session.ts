@@ -18,6 +18,7 @@ import type { SharedContextManager } from "./shared-context-manager.js";
 import type { AuthManager } from "../auth/auth-manager.js";
 import { humanType, randomDelay } from "../utils/stealth-utils.js";
 import { snapshotAllResponses } from "../utils/page-utils.js";
+import { Selectors, joinAlt } from "../notebooklm/selectors.js";
 import { waitForStableAnswer, snapshotPriorAnswers } from "../notebooklm/chat.js";
 import {
   extractCitations as extractCitationsFromPage,
@@ -175,6 +176,11 @@ export class BrowserSession {
     }
 
     try {
+      // Dismiss lingering CDK overlays first — on the rebranded
+      // notebook.google.com UI a leftover backdrop after the Add-source
+      // dialog closes blocks interaction with the chat input.
+      await this.dismissOverlays();
+
       // PRIMARY: Exact Python selector - textarea.query-box-input
       log.info("  ⏳ Waiting for chat input (textarea.query-box-input)...");
       await this.page.waitForSelector("textarea.query-box-input", {
@@ -183,10 +189,11 @@ export class BrowserSession {
       });
       log.success("  ✅ Chat input ready!");
     } catch {
-      // FALLBACK: Python alternative selector
+      // FALLBACK: joinAlt list (KO + all locales) instead of one hard-coded
+      // German aria-label.
       try {
-        log.info("  ⏳ Trying fallback selector (aria-label)...");
-        await this.page.waitForSelector('textarea[aria-label="Feld für Anfragen"]', {
+        log.info("  ⏳ Trying fallback selector list (locale aria-labels)...");
+        await this.page.waitForSelector(joinAlt(Selectors.chat.queryInput), {
           timeout: 5000, // Python uses 5s for fallback
           state: "visible",
         });
@@ -391,7 +398,9 @@ export class BrowserSession {
       }
       log.success(`  ✅ Captured ${existingResponses.length} existing responses`);
 
-      // Find the chat input
+      // Find the chat input — first clear lingering CDK overlays that would
+      // intercept clicks at the input (rebranded UI leaves backdrops behind).
+      await this.dismissOverlays();
       const inputSelector = await this.findChatInput();
       if (!inputSelector) {
         throw new Error(
@@ -541,6 +550,64 @@ export class BrowserSession {
   }
 
   /**
+   * Dismiss lingering CDK overlays (popovers, backdrops, modals).
+   *
+   * The rebranded notebook.google.com UI (2026) leaves `cdk-overlay-backdrop`
+   * / `cdk-overlay-popover` elements mounted after the Add-source dialog
+   * closes. These invisible layers intercept pointer events, so every click
+   * at the chat input times out. Remedy: press Escape (Angular CDK closes
+   * most popovers on Escape) and wait until no dark backdrop is visible.
+   */
+  async dismissOverlays(): Promise<void> {
+    if (!this.page || this.isPageClosedSafe()) return;
+    const page = this.page;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const backdropVisible = await page
+        .locator(".cdk-overlay-backdrop")
+        .first()
+        .isVisible({ timeout: 300 })
+        .catch(() => false);
+      const popoverVisible = await page
+        .locator(".cdk-overlay-popover")
+        .first()
+        .isVisible({ timeout: 300 })
+        .catch(() => false);
+
+      if (!backdropVisible && !popoverVisible) return;
+
+      log.info(`  🚪 Dismissing lingering CDK overlay (attempt ${attempt + 1})…`);
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await randomDelay(300, 500);
+
+      // If the overlay survived Escape, click the backdrop to force-close.
+      const stillThere = await page
+        .locator(".cdk-overlay-backdrop")
+        .first()
+        .isVisible({ timeout: 200 })
+        .catch(() => false);
+      if (stillThere) {
+        await page
+          .locator(".cdk-overlay-backdrop")
+          .first()
+          .click({ force: true, timeout: 1_000 })
+          .catch(() => undefined);
+        await randomDelay(200, 400);
+      }
+    }
+
+    // Final state: log if something is still blocking.
+    const blocked = await page
+      .locator(".cdk-overlay-backdrop")
+      .first()
+      .isVisible({ timeout: 200 })
+      .catch(() => false);
+    if (blocked) {
+      log.warning("  ⚠️  CDK overlay still visible after dismissal attempts");
+    }
+  }
+
+  /**
    * Find the chat input element
    *
    * IMPORTANT: Matches Python implementation EXACTLY!
@@ -565,6 +632,9 @@ export class BrowserSession {
       'textarea[aria-label*="requete" i]',
       'textarea[aria-label*="consulta" i]',
       'textarea[aria-label*="domanda" i]',
+      // KO — Korean locale on the rebranded notebook.google.com UI.
+      'textarea[aria-label*="쿼리 상자" i]',
+      'textarea[placeholder*="질문하거나 창작하세요" i]',
     ];
 
     const tryFind = async (): Promise<string | null> => {
@@ -593,6 +663,15 @@ export class BrowserSession {
     // URL up. Try all three remedies and re-probe.
     log.warning("  ⚠️  Chat input not visible, attempting recovery…");
     try {
+      // NEW (2026 rebrand): dismiss lingering CDK backdrops/popovers first —
+      // they intercept pointer events and are the most common blocker.
+      await this.dismissOverlays();
+      hit = await tryFind();
+      if (hit) {
+        log.success(`  ✅ Found chat input after overlay dismissal: ${hit}`);
+        return hit;
+      }
+
       await this.page.keyboard.press("Escape").catch(() => undefined);
       await this.page.keyboard.press("Escape").catch(() => undefined);
       await randomDelay(200, 400);
