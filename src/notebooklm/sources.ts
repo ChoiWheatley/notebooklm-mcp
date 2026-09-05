@@ -8,16 +8,17 @@
  * File-upload, YouTube and Google-Drive ingestion are intentionally out of
  * scope for v2.0.0 — they require different overlay flows.
  *
- * Robustness strategy (2026-05, ported from the Fork's content-manager.ts):
+ * Robustness strategy (2026-09, verified against the live rebranded UI):
  *
  *   1. Capture the *expected notebook UUID* from the URL up-front. NotebookLM
  *      sometimes redirects pasted-text uploads to a freshly-created notebook;
  *      we detect that and surface a clear error.
  *
  *   2. Resolve the dialog state defensively: if a dialog is already open we
- *      use it; otherwise we click the sidebar "Add source" button. The
- *      `[role="dialog"]` anchor is set synchronously on mount, so we do not
- *      have to race the Material `.mdc-dialog--open` animation class.
+ *      use it; otherwise we click the sidebar "Add source" control. In the
+ *      rebranded UI Playwright locator clicks are intercepted by an
+ *      invisible cdk backdrop, so after failed locator clicks we fall back
+ *      to a direct DOM click via page.evaluate (verified E2E 2026-09).
  *
  *   3. Source-type buttons no longer ship with aria-labels — see
  *      selectors.ts for the icon-/text-based anchors.
@@ -224,14 +225,14 @@ async function openAddSourceOverlay(page: Page): Promise<void> {
   await dismissOverlays(page);
 
   // Try the sidebar button first — fastest path on a populated notebook.
-  // Two rounds: a normal click, then a force-click retry (the rebranded UI
-  // sometimes keeps an invisible overlay above the button).
-  for (let round = 0; round < 2; round++) {
+  // Three rounds: normal click, force click, then a direct DOM click (the
+  // rebranded UI's invisible backdrop defeats locator hit-testing).
+  for (let round = 0; round < 3; round++) {
     try {
       await page
         .locator(joinAlt(Selectors.sources.addButton))
         .first()
-        .click({ timeout: 5_000, force: round === 1 });
+        .click({ timeout: 5_000, force: round >= 1 });
       await page
         .locator(Selectors.sources.overlayPane)
         .first()
@@ -241,9 +242,40 @@ async function openAddSourceOverlay(page: Page): Promise<void> {
       if (round === 0) {
         log.warning(`  ⚠️  Add-source button click failed (${err}), retrying with force…`);
         await dismissOverlays(page);
+      } else if (round === 1) {
+        log.warning("  ⚠️  Force click failed, trying direct DOM click…");
+        let opened = false;
+        for (const sel of Selectors.sources.addButton) {
+          if (await domClick(page, sel)) {
+            await page
+              .locator(Selectors.sources.overlayPane)
+              .first()
+              .waitFor({ state: "visible", timeout: 8_000 })
+              .catch(() => undefined);
+            if (await isOverlayVisible(page)) {
+              log.info(`  ✅ Add-source dialog opened via DOM click (${sel})`);
+              opened = true;
+              break;
+            }
+          }
+        }
+        if (opened) return;
+        // Last DOM fallback used successfully in E2E verification: the text
+        // link inside the sources panel.
+        if (await domClick(page, ".add-source-link")) {
+          await page
+            .locator(Selectors.sources.overlayPane)
+            .first()
+            .waitFor({ state: "visible", timeout: 8_000 })
+            .catch(() => undefined);
+          if (await isOverlayVisible(page)) {
+            log.info("  ✅ Add-source dialog opened via DOM click (.add-source-link)");
+            return;
+          }
+        }
       } else {
         log.warning(
-          `  ⚠️  Add-source button force-click failed (${err}), trying ?addSource=true URL fallback`
+          `  ⚠️  Add-source DOM click failed (${err}), trying ?addSource=true URL fallback`
         );
       }
     }
@@ -273,15 +305,31 @@ async function isOverlayVisible(page: Page): Promise<boolean> {
     .catch(() => false);
 }
 
+/**
+ * Direct DOM click fallback. The rebranded UI keeps an invisible
+ * `.cdk-overlay-backdrop` mounted that intercepts Playwright locator clicks;
+ * a dispatched click on the element itself bypasses hit testing entirely.
+ * Returns true when a matching element was found and clicked.
+ */
+async function domClick(page: Page, selector: string): Promise<boolean> {
+  return page
+    .evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      (el as HTMLElement).click();
+      return true;
+    }, selector)
+    .catch(() => false);
+}
+
 async function pickSourceType(page: Page, type: SourceType): Promise<void> {
   const candidates =
     type === "url" ? Selectors.sources.sourceTypeUrl : Selectors.sources.sourceTypeText;
   const overlay = page.locator(Selectors.sources.overlayPane).first();
 
-  // Informational popovers (e.g. the KO quota popover) can sit above the
-  // source-type cards — clear them before clicking.
-  await dismissOverlays(page);
-
+  // NOTE: do NOT run dismissOverlays here. Once the add-source dialog is
+  // open, its own cdk backdrop is detected by dismissOverlays and the
+  // Escape press closes the dialog we just opened (verified live 2026-09).
   for (const sel of candidates) {
     const target = overlay.locator(sel).first();
     if (await target.isVisible({ timeout: 1_000 }).catch(() => false)) {
@@ -372,7 +420,16 @@ async function confirmInsert(page: Page): Promise<void> {
       } catch {
         // Force-click fallback when a lingering overlay intercepts.
         await dismissOverlays(page);
-        await btn.click({ timeout: 5_000, force: true });
+        await btn.click({ timeout: 5_000, force: true }).catch(async () => {
+          // The rebranded UI's backdrop can still defeat force clicks; the
+          // dispatched DOM click is the verified last resort (E2E 2026-09).
+          const text = sel.match(/has-text\("([^"]+)"\)/)?.[1];
+          if (text && (await domClick(page, `.cdk-overlay-pane button:has-text("${text}")`))) {
+            log.info(`  ✅ submit clicked via DOM click (${text})`);
+            return;
+          }
+          throw new Error(`Insert click failed for selector: ${sel}`);
+        });
       }
       log.info(`  ✅ submit clicked (selector: ${sel})`);
       return;

@@ -129,6 +129,9 @@ export const Selectors = {
      * agnostic; aria-labels listed for older builds without the class.
      */
     addButton: [
+      // Rebranded 2026-09 UI: the entry point is a text link button inside
+      // the sources panel ("소스를 추가하세요" / class `add-source-link`).
+      "button.add-source-link",
       "button.add-source-button",
       'button[aria-label="Add source"]',
       'button[aria-label*="add source" i]',
@@ -147,14 +150,18 @@ export const Selectors = {
       'button[aria-label*="ソースを追加" i]',
     ],
     /**
-     * Real Material modal. `[role="dialog"]` is set by Angular synchronously
-     * the moment the modal mounts — race-free against the `.mdc-dialog--open`
-     * animation class and resistant to Material-UI version bumps. Avoid
-     * `.cdk-overlay-pane` (matches every dropdown / emoji picker / menu).
+     * Real Material modal. In the rebranded UI the add-source dialog mounts
+     * as `.cdk-overlay-pane.mat-mdc-dialog-panel` WITHOUT `[role="dialog"]`
+     * — the only `[role="dialog"]` in the overlay container is the emoji
+     * picker. Anchor on the dialog-panel class and exclude the emoji
+     * container from the role fallback (verified live 2026-09).
      */
-    overlayPane: '[role="dialog"]',
-    overlayInput: '[role="dialog"] input[type="text"]:not([readonly])',
-    overlayTextarea: '[role="dialog"] textarea',
+    overlayPane:
+      '.cdk-overlay-pane.mat-mdc-dialog-panel, [role="dialog"]:not(.emoji-keyboard__container)',
+    overlayInput:
+      '.cdk-overlay-pane.mat-mdc-dialog-panel input[type="text"]:not([readonly]), [role="dialog"]:not(.emoji-keyboard__container) input[type="text"]:not([readonly])',
+    overlayTextarea:
+      '.cdk-overlay-pane.mat-mdc-dialog-panel textarea, [role="dialog"]:not(.emoji-keyboard__container) textarea',
     /**
      * Source-type buttons in the Add-source overlay. Google ships them
      * *without* aria-labels — the only stable, language-agnostic anchor is
